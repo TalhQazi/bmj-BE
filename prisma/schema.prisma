@@ -1,0 +1,207 @@
+// Benchmark Justice™ — Canonical Data Model
+// Built from: Attorney FULL SPEC (§ DATABASE — COMPLETE SCHEMA),
+// FULL Engineering (§4 Normalization Engine), Backend Buildout Spec (§10 Canonical Data Model)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Used both for case participation (ATTORNEY/JUDGE/PROSECUTOR) and as the
+// generic entity-type discriminator on the Score table (all four, including LEGISLATOR,
+// which does not participate in cases).
+enum ParticipantType {
+  ATTORNEY
+  JUDGE
+  PROSECUTOR
+  LEGISLATOR
+}
+
+enum ParticipantRole {
+  DEFENSE
+  PLAINTIFF
+  PROSECUTION
+}
+
+enum ScoreType {
+  BJI // Judicial
+  PDI // Prosecutorial
+  API // Attorney Performance Intelligence
+  LII // Legislative
+}
+
+enum Chamber {
+  HOUSE
+  SENATE
+}
+
+model Attorney {
+  id                    String   @id @default(uuid())
+  fullName              String
+  normalizedName        String
+  barNumber             String?
+  jurisdiction          String
+  firmName              String?
+  barAdmissionDate      String?
+  admissionJurisdiction String?
+  createdAt             DateTime @default(now())
+
+  @@index([fullName])
+  @@index([jurisdiction])
+  @@map("attorneys")
+}
+
+model Judge {
+  id                  String   @id @default(uuid())
+  fullName            String
+  normalizedName      String
+  jurisdiction        String
+  court               String
+  courtListenerId     Int?     @unique // person.id from courtlistener.com /positions/ — null for mock-seeded judges
+  appointedDate       String?
+  appointingAuthority String?
+  nominationDate      String?
+  createdAt           DateTime @default(now())
+
+  @@index([fullName])
+  @@index([jurisdiction])
+  @@map("judges")
+}
+
+model Prosecutor {
+  id                  String   @id @default(uuid())
+  fullName            String
+  normalizedName      String
+  office              String
+  jurisdiction        String
+  appointedDate       String?
+  appointingAuthority String?
+  createdAt           DateTime @default(now())
+
+  @@index([fullName])
+  @@index([jurisdiction])
+  @@map("prosecutors")
+}
+
+model Legislator {
+  id             String   @id @default(uuid())
+  fullName       String
+  normalizedName String
+  chamber        Chamber
+  party          String
+  state          String
+  district       String?
+  bioguideId     String?  @unique // Congress.gov member ID — null for mock-seeded legislators
+  createdAt      DateTime @default(now())
+
+  metrics      LegislatorMetric?
+
+  @@index([fullName])
+  @@index([state])
+  @@map("legislators")
+}
+
+// Judicial / Prosecutorial / Attorney all attach to Case via CaseParticipant.
+// Legislators do not attach to cases — they get a dedicated metrics table (bills/votes),
+// matching "Legislative: Legislator ID, Bills sponsored, Votes, Attendance, Party alignment"
+// from the Full Engineering spec §4.
+model LegislatorMetric {
+  id                  String     @id @default(uuid())
+  legislatorId        String     @unique
+  legislator          Legislator @relation(fields: [legislatorId], references: [id])
+  billsSponsored      Int        @default(0)
+  billsIntroduced     Int        @default(0)
+  billsPassed         Int        @default(0)
+  votesCast           Int        @default(0)
+  votesEligible       Int        @default(0)
+  attendanceRate      Float      @default(0) // 0..1
+  districtAlignment   Float      @default(0) // 0..1, votes matching district-majority position
+  updatedAt           DateTime   @updatedAt
+
+  @@map("legislator_metrics")
+}
+
+model Case {
+  id                     String    @id @default(uuid())
+  jurisdiction           String
+  caseType               String
+  severityScore          Float // 1..5
+  filingDate             DateTime
+  resolutionDate         DateTime?
+  courtListenerDocketId  Int?      @unique // docket.id from courtlistener.com — null for mock-seeded cases
+  createdAt              DateTime  @default(now())
+
+  participants     CaseParticipant[]
+  outcome          CaseOutcome?
+  features         CaseFeature?
+
+  @@index([jurisdiction])
+  @@index([caseType])
+  @@map("cases")
+}
+
+model CaseParticipant {
+  id           String          @id @default(uuid())
+  caseId       String
+  case         Case            @relation(fields: [caseId], references: [id])
+  entityType   ParticipantType
+  entityId     String
+  role         ParticipantRole
+
+  @@index([caseId, entityType])
+  @@index([entityType, entityId])
+  @@map("case_participants")
+}
+
+model CaseOutcome {
+  id                 String  @id @default(uuid())
+  caseId             String  @unique
+  case               Case    @relation(fields: [caseId], references: [id])
+  rawOutcome         String // e.g. "WIN", "PARTIAL_WIN", "STANDARD_PLEA", "SETTLEMENT", "LOSS"
+  normalizedOutcome  Float // 0..1, per NORMALIZATION RULESET (LOCKED)
+  confidence         Float // 0..1
+
+  @@map("case_outcomes")
+}
+
+model CaseFeature {
+  caseId             String  @id
+  case               Case    @relation(fields: [caseId], references: [id])
+  priorHistoryScore  Float   @default(0)
+  evidenceWeight     Float   @default(0.5)
+  pleaFlag           Boolean @default(false)
+
+  @@map("case_features")
+}
+
+// Precomputed / cached scores, per "Scores precomputed nightly" performance requirement.
+// This MVP computes on demand and upserts here so repeated reads are fast, matching intent.
+model Score {
+  id           String    @id @default(uuid())
+  entityType   ParticipantType
+  entityId     String
+  scoreType    ScoreType
+  value        Float // -3..+3 standardized score
+  confidence   Float // 0..1
+  sampleSize   Int
+  computedAt   DateTime  @default(now())
+
+  @@unique([entityType, entityId, scoreType])
+  @@map("scores")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  password  String
+  role      String   @default("USER") // USER, ATTORNEY, RESEARCHER, ADMIN
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
