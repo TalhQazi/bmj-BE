@@ -9,4 +9,9 @@ export class IntelligenceController {
   async getRecentIntelligence() {
     return this.intelligenceService.getRecentIntelligence();
   }
+
+  @Get('stats')
+  async getCoverageStats() {
+    return this.intelligenceService.getCoverageStats();
+  }
 }

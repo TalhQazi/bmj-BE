@@ -9,6 +9,7 @@ import { CasesModule } from './cases/cases.module';
 import { SearchModule } from './search/search.module';
 import { IngestionModule } from './ingestion/ingestion.module';
 import { AuthModule } from './auth/auth.module';
+import { IntelligenceModule } from './intelligence/intelligence.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { AuthModule } from './auth/auth.module';
     SearchModule,
     IngestionModule,
     AuthModule,
+    IntelligenceModule,
   ],
 })
 export class AppModule {}
