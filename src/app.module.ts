@@ -10,6 +10,7 @@ import { SearchModule } from './search/search.module';
 import { IngestionModule } from './ingestion/ingestion.module';
 import { AuthModule } from './auth/auth.module';
 import { IntelligenceModule } from './intelligence/intelligence.module';
+import { AppController } from './app.controller';
 
 @Module({
   imports: [
@@ -25,5 +26,6 @@ import { IntelligenceModule } from './intelligence/intelligence.module';
     AuthModule,
     IntelligenceModule,
   ],
+  controllers: [AppController],
 })
 export class AppModule {}
