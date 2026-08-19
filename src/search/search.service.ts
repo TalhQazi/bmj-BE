@@ -7,7 +7,12 @@ import { LegislatorsService } from '../legislators/legislators.service';
 import { AttorneysService } from '../attorneys/attorneys.service';
 import { ProsecutorsService } from '../prosecutors/prosecutors.service';
 import { Chamber, ParticipantType } from '@prisma/client';
-import { isCaseDocketQuery, cleanDocketQuery } from './docket-utils';
+import {
+  isCaseDocketQuery,
+  cleanDocketQuery,
+  isCitationQuery,
+  parseCitationParts,
+} from './docket-utils';
 
 function formatProperCase(str: string): string {
   return str
@@ -93,12 +98,64 @@ export class SearchService {
       };
     }
 
+    const isCitation = isCitationQuery(trimmedQuery);
     const isDocket = isCaseDocketQuery(trimmedQuery);
     const cleanDocket = cleanDocketQuery(trimmedQuery);
 
-    // If query is a Case / Docket format, query CourtListener in real-time and return case results directly
-    if (isDocket) {
+    // If query is a Supreme Court Citation or Case Docket format, route strictly to cases and bypass attorney folder
+    if (isCitation || isDocket) {
       const casesList: any[] = [];
+      const citParts = parseCitationParts(cleanDocket);
+
+      if (isCitation && citParts) {
+        try {
+          const liveCitCase = await this.courtListener.searchCaseByCitation(
+            citParts.volume,
+            citParts.reporter,
+            citParts.page,
+            cleanDocket,
+          );
+          if (liveCitCase) {
+            casesList.push({
+              id: liveCitCase.docketId ? String(liveCitCase.docketId) : cleanDocket,
+              type: 'case',
+              name: liveCitCase.caseName || `Supreme Court Citation ${cleanDocket}`,
+              jurisdiction: liveCitCase.court || 'Supreme Court of the United States',
+              court: liveCitCase.court || 'U.S. Supreme Court Precedents',
+              docketNumber: cleanDocket,
+            });
+          } else {
+            casesList.push({
+              id: cleanDocket,
+              type: 'case',
+              name: `Supreme Court Precedent (${cleanDocket})`,
+              jurisdiction: 'Supreme Court of the United States',
+              court: 'United States Reports Precedent Database',
+              docketNumber: cleanDocket,
+            });
+          }
+        } catch (err: any) {
+          this.logger.warn(`Citation search error: ${err.message}`);
+          casesList.push({
+            id: cleanDocket,
+            type: 'case',
+            name: `Supreme Court Citation ${cleanDocket}`,
+            jurisdiction: 'Supreme Court of the United States',
+            court: 'United States Reports Precedent Database',
+            docketNumber: cleanDocket,
+          });
+        }
+
+        return {
+          cases: casesList,
+          attorneys: [],
+          judges: [],
+          prosecutors: [],
+          legislators: [],
+        };
+      }
+
+      // If docket format:
       try {
         const liveCase = await this.courtListener.searchCaseByDocket(cleanDocket);
         if (liveCase) {

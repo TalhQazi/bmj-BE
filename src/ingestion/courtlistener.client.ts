@@ -344,6 +344,43 @@ export class CourtListenerClient {
   }
 
   /**
+   * Search real live case by Supreme Court or Reporter citation on CourtListener in real-time
+   */
+  async searchCaseByCitation(volume: string, reporter: string, page: string, rawCitation: string) {
+    try {
+      const cleanCitation = rawCitation.trim();
+      // Search opinions / precedents (type=o) using the citation query
+      const data = await this.get<any>('/search/', {
+        type: 'o',
+        q: `"${cleanCitation}"`,
+        page_size: 5,
+      });
+
+      const results: any[] = data.results ?? [];
+      if (results.length > 0) {
+        const top = results[0];
+        return {
+          docketId: top.docket_id ? Number(top.docket_id) : (top.id ? Number(top.id) : null),
+          caseName: top.caseName || top.case_name || top.name || `Citation ${cleanCitation}`,
+          docketNumber: top.docket_number || cleanCitation,
+          court: top.court || top.court_exact || 'Supreme Court of the United States',
+          dateFiled: top.dateFiled || top.date_filed || top.date_created || null,
+          dateTerminated: top.dateTerminated || top.date_terminated || null,
+          natureOfSuit: top.suit || top.nature_of_suit || 'Supreme Court Precedent / Constitutional Ruling',
+          judge: top.judge || top.author_str || null,
+          citation: cleanCitation,
+          volume,
+          page,
+        };
+      }
+      return null;
+    } catch (err: any) {
+      this.logger.warn(`Live CourtListener citation search failed for ${rawCitation}: ${err.message}`);
+      return null;
+    }
+  }
+
+  /**
    * Fetch live docket entries for a specific CourtListener docket
    */
   async getDocketEntries(docketId: number) {
@@ -360,4 +397,5 @@ export class CourtListenerClient {
     }
   }
 }
+
 
