@@ -35,11 +35,64 @@ export class SearchService {
 
   async searchAll(q: string) {
     console.log('[SearchService] Incoming search query:', q);
-    if (!q || q.trim().length === 0) {
-      return { cases: [], attorneys: [], judges: [], prosecutors: [], legislators: [] };
+    const trimmedQuery = (q || '').trim();
+
+    // 0. If empty or 'all', return top records from all 5 categories
+    if (!trimmedQuery || trimmedQuery.toLowerCase() === 'all') {
+      const [topAttorneys, topJudges, topProsecutors, topLegislators, topCases] = await Promise.all([
+        this.prisma.attorney.findMany({ take: 25, orderBy: { createdAt: 'desc' } }),
+        this.prisma.judge.findMany({ take: 25, orderBy: { createdAt: 'desc' } }),
+        this.prisma.prosecutor.findMany({ take: 25, orderBy: { createdAt: 'desc' } }),
+        this.prisma.legislator.findMany({ take: 25, orderBy: { createdAt: 'desc' } }),
+        this.prisma.case.findMany({ take: 25, orderBy: { filingDate: 'desc' } }),
+      ]);
+
+      return {
+        cases: topCases.map((c) => ({
+          id: c.id,
+          type: 'case',
+          name: `${c.caseType} Matter`,
+          court: c.jurisdiction || 'Federal Appellate Court',
+          jurisdiction: c.jurisdiction,
+          docketNumber: c.courtListenerDocketId ? String(c.courtListenerDocketId) : undefined,
+          score: c.severityScore,
+        })),
+        attorneys: topAttorneys.map((a) => ({
+          id: a.id,
+          type: 'attorney',
+          name: a.fullName,
+          jurisdiction: a.jurisdiction,
+          court: a.firmName,
+          barNumber: a.barNumber,
+        })),
+        judges: topJudges.map((j) => ({
+          id: j.id,
+          type: 'judge',
+          name: j.fullName,
+          court: j.court,
+          jurisdiction: j.jurisdiction,
+          courtListenerId: j.courtListenerId,
+        })),
+        prosecutors: topProsecutors.map((p) => ({
+          id: p.id,
+          type: 'prosecutor',
+          name: p.fullName,
+          jurisdiction: p.jurisdiction,
+          office: p.office,
+        })),
+        legislators: topLegislators.map((l) => ({
+          id: l.id,
+          type: 'legislator',
+          name: l.fullName,
+          chamber: l.chamber,
+          party: l.party,
+          state: l.state,
+          district: l.district,
+          bioguideId: l.bioguideId,
+        })),
+      };
     }
 
-    const trimmedQuery = q.trim();
     const isDocket = isCaseDocketQuery(trimmedQuery);
     const cleanDocket = cleanDocketQuery(trimmedQuery);
 
@@ -88,16 +141,64 @@ export class SearchService {
       };
     }
 
-    const where = { fullName: { contains: trimmedQuery, mode: 'insensitive' as const } };
-
-    // 1. Search local DB first across all 4 categories
-    const [localAttorneys, localJudges, localProsecutors, localLegislators] = await Promise.all([
-      this.prisma.attorney.findMany({ where, take: 10 }),
-      this.prisma.judge.findMany({ where, take: 10 }),
-      this.prisma.prosecutor.findMany({ where, take: 10 }),
-      this.prisma.legislator.findMany({ where, take: 10 }),
+    // 1. Search local DB across all 5 categories with multi-field OR query
+    const [localAttorneys, localJudges, localProsecutors, localLegislators, localCases] = await Promise.all([
+      this.prisma.attorney.findMany({
+        where: {
+          OR: [
+            { fullName: { contains: trimmedQuery, mode: 'insensitive' } },
+            { normalizedName: { contains: trimmedQuery, mode: 'insensitive' } },
+            { jurisdiction: { contains: trimmedQuery, mode: 'insensitive' } },
+            { firmName: { contains: trimmedQuery, mode: 'insensitive' } },
+          ],
+        },
+        take: 15,
+      }),
+      this.prisma.judge.findMany({
+        where: {
+          OR: [
+            { fullName: { contains: trimmedQuery, mode: 'insensitive' } },
+            { normalizedName: { contains: trimmedQuery, mode: 'insensitive' } },
+            { court: { contains: trimmedQuery, mode: 'insensitive' } },
+            { jurisdiction: { contains: trimmedQuery, mode: 'insensitive' } },
+          ],
+        },
+        take: 15,
+      }),
+      this.prisma.prosecutor.findMany({
+        where: {
+          OR: [
+            { fullName: { contains: trimmedQuery, mode: 'insensitive' } },
+            { normalizedName: { contains: trimmedQuery, mode: 'insensitive' } },
+            { office: { contains: trimmedQuery, mode: 'insensitive' } },
+            { jurisdiction: { contains: trimmedQuery, mode: 'insensitive' } },
+          ],
+        },
+        take: 15,
+      }),
+      this.prisma.legislator.findMany({
+        where: {
+          OR: [
+            { fullName: { contains: trimmedQuery, mode: 'insensitive' } },
+            { normalizedName: { contains: trimmedQuery, mode: 'insensitive' } },
+            { state: { contains: trimmedQuery, mode: 'insensitive' } },
+            { party: { contains: trimmedQuery, mode: 'insensitive' } },
+          ],
+        },
+        take: 15,
+      }),
+      this.prisma.case.findMany({
+        where: {
+          OR: [
+            { caseType: { contains: trimmedQuery, mode: 'insensitive' } },
+            { jurisdiction: { contains: trimmedQuery, mode: 'insensitive' } },
+          ],
+        },
+        take: 15,
+      }),
     ]);
 
+    const casesList: any[] = [...localCases];
     const judgesList = [...localJudges];
     const legislatorsList = [...localLegislators];
     const attorneysList = [...localAttorneys];
@@ -358,8 +459,21 @@ export class SearchService {
       if (!uniqueProsecutors.has(key)) uniqueProsecutors.set(key, p);
     }
 
+    const uniqueCases = new Map<string, (typeof casesList)[0]>();
+    for (const c of casesList) {
+      if (!uniqueCases.has(c.id)) uniqueCases.set(c.id, c);
+    }
+
     return {
-      cases: [],
+      cases: Array.from(uniqueCases.values()).map((c) => ({
+        id: c.id,
+        type: 'case',
+        name: c.name || c.caseName || `${c.caseType || 'Court'} Matter`,
+        court: c.court || c.jurisdiction || 'Federal / State Court',
+        jurisdiction: c.jurisdiction || 'U.S. Jurisdiction',
+        docketNumber: c.docketNumber || (c.courtListenerDocketId ? String(c.courtListenerDocketId) : undefined),
+        score: c.severityScore,
+      })),
       attorneys: Array.from(uniqueAttorneys.values()).map((a) => ({
         id: a.id,
         type: 'attorney',

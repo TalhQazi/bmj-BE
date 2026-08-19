@@ -14,4 +14,9 @@ export class IntelligenceController {
   async getCoverageStats() {
     return this.intelligenceService.getCoverageStats();
   }
+
+  @Get('feed')
+  async getIntelligenceFeed() {
+    return this.intelligenceService.getIntelligenceFeed();
+  }
 }
